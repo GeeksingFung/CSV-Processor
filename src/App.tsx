@@ -17,6 +17,7 @@ export default function App() {
   const [isInIframe, setIsInIframe] = useState(false);
   const [encoding, setEncoding] = useState<string>('GBK');
   const [currentFile, setCurrentFile] = useState<File | null>(null);
+  const [filters, setFilters] = useState<Record<number, string>>({});
 
   useEffect(() => {
     try {
@@ -51,20 +52,24 @@ export default function App() {
         if (data.length < 1) return;
 
         const rawHeaders = data[0];
-        const filteredRows = data.slice(1).filter(row => row[4] === 'Grok');
+        const allRows = data.slice(1);
 
         setHeaders([
           rawHeaders[0] || 'A', 
           rawHeaders[1] || 'B', 
           rawHeaders[3] || 'D', 
+          rawHeaders[4] || 'E',
           rawHeaders[6] || 'G'
         ]);
-        setCsvData(filteredRows.map(row => [
+        setCsvData(allRows.map(row => [
           row[0] || '', 
           row[1] || '', 
           row[3] || '', 
+          row[4] || '',
           row[6] || ''
         ]));
+        setFilters({});
+        setCheckedRows(new Set());
       }
     });
   }, [currentFile, encoding]);
@@ -146,6 +151,18 @@ export default function App() {
     showToast(`Downloaded as ${newName}`);
   };
 
+  const getUniqueValues = (colIndex: number) => {
+    const vals = new Set(csvData.map(row => row[colIndex]));
+    return Array.from(vals).filter(Boolean).sort();
+  };
+
+  const filteredData = csvData.filter(row => {
+    return Object.entries(filters).every(([colIdx, filterVal]) => {
+      if (!filterVal) return true;
+      return row[Number(colIdx)] === filterVal;
+    });
+  });
+
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900 font-sans p-8">
       {/* Header */}
@@ -206,18 +223,32 @@ export default function App() {
                 <thead className="bg-neutral-50 border-b border-neutral-200 text-neutral-600 font-medium">
                   <tr>
                     <th className="px-4 py-3 w-12 text-center"></th>
-                    <th className="px-4 py-3">{headers[0]} (A)</th>
-                    <th className="px-4 py-3">{headers[1]} (B)</th>
-                    <th className="px-4 py-3">{headers[2]} (C)</th>
-                    <th className="px-4 py-3">{headers[3]} (D)</th>
+                    {headers.map((header, idx) => (
+                      <th key={idx} className="px-4 py-3 align-top">
+                        <div className="flex flex-col gap-2">
+                          <span className="font-semibold text-neutral-700">{header} <span className="text-neutral-400 font-normal text-xs">(原 {['A', 'B', 'D', 'E', 'G'][idx]} 列)</span></span>
+                          <select
+                            className="text-xs border border-neutral-300 rounded px-1 py-1 font-normal bg-white text-neutral-700 focus:outline-none focus:ring-1 focus:ring-blue-500 max-w-[150px]"
+                            value={filters[idx] || ''}
+                            onChange={(e) => setFilters(prev => ({ ...prev, [idx]: e.target.value }))}
+                          >
+                            <option value="">全部 (All)</option>
+                            {getUniqueValues(idx).map(val => (
+                              <option key={val} value={val}>{val}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-100">
-                  {csvData.map((row, rowIndex) => {
-                    const isChecked = checkedRows.has(rowIndex);
+                  {filteredData.map((row) => {
+                    const originalIndex = csvData.indexOf(row);
+                    const isChecked = checkedRows.has(originalIndex);
                     return (
                       <tr
-                        key={rowIndex}
+                        key={originalIndex}
                         className={cn(
                           "transition-colors hover:bg-neutral-50/50",
                           isChecked && "bg-neutral-50 text-neutral-400 line-through"
@@ -225,7 +256,7 @@ export default function App() {
                       >
                         <td className="px-4 py-3 text-center">
                           <button
-                            onClick={() => toggleRow(rowIndex)}
+                            onClick={() => toggleRow(originalIndex)}
                             className="text-neutral-400 hover:text-blue-600 transition-colors focus:outline-none"
                           >
                             {isChecked ? <CheckSquare className="w-5 h-5 text-blue-600" /> : <Square className="w-5 h-5" />}
@@ -240,6 +271,7 @@ export default function App() {
                           onDropFile={(e) => handleFileDropOnCell(e, row[2])}
                         />
                         <TableCell value={row[3]} onClick={() => handleCellClick(row[3])} />
+                        <TableCell value={row[4]} onClick={() => handleCellClick(row[4])} />
                       </tr>
                     );
                   })}
