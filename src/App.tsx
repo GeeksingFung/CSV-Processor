@@ -115,7 +115,10 @@ export default function App() {
     if (!file) return;
 
     const ext = file.name.split('.').pop();
-    const newName = `${newNameBase}.${ext}`;
+    // 提取主表格C列数据中“.”之前的内容（去除原有的扩展名）
+    const lastDotIndex = newNameBase.lastIndexOf('.');
+    const baseName = lastDotIndex !== -1 ? newNameBase.substring(0, lastDotIndex) : newNameBase;
+    const newName = `${baseName}.${ext}`;
 
     if (dirHandle) {
       try {
