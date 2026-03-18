@@ -194,25 +194,48 @@ export default function App() {
       }
 
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const prompt = `Translate the following JSON array of strings. If a string is mostly Chinese, translate it to English. If it is mostly English, translate it to Chinese. Keep the exact same array length and order. Return ONLY a valid JSON array of strings.`;
+      const prompt = `Translate the following JSON array of strings. If a string is mostly Chinese, translate it to English. If it is mostly English, translate it to Chinese. Keep the exact same array length and order. Return a JSON object with a single key "translations" containing the array of translated strings.`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `${prompt}\n\n${JSON.stringify(uniqueValues)}`,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING }
+      const chunkSize = 50;
+      let allTranslated: string[] = [];
+
+      for (let i = 0; i < uniqueValues.length; i += chunkSize) {
+        const chunk = uniqueValues.slice(i, i + chunkSize);
+        
+        const response = await ai.models.generateContent({
+          model: "gemini-3-flash-preview",
+          contents: `${prompt}\n\n${JSON.stringify(chunk)}`,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                translations: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING }
+                }
+              },
+              required: ["translations"]
+            }
           }
-        }
-      });
+        });
 
-      const translatedArray = JSON.parse(response.text || '[]');
+        let responseText = response.text || '{}';
+        responseText = responseText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
+        
+        const parsed = JSON.parse(responseText);
+        const translatedChunk = parsed.translations || [];
+        
+        if (!Array.isArray(translatedChunk) || translatedChunk.length !== chunk.length) {
+          throw new Error(`Invalid translation response length for chunk ${i / chunkSize}`);
+        }
+        
+        allTranslated = allTranslated.concat(translatedChunk);
+      }
       
       const newTranslationMap: Record<string, string> = {};
       uniqueValues.forEach((val, idx) => {
-        newTranslationMap[val] = translatedArray[idx] || val;
+        newTranslationMap[val] = allTranslated[idx] || val;
       });
 
       setTranslations(prev => ({ ...prev, [colIndex]: newTranslationMap }));
@@ -221,9 +244,9 @@ export default function App() {
       newSet.add(colIndex);
       setTranslatedCols(newSet);
       showToast(`Column translated successfully.`);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Translation error:", error);
-      showToast("Translation failed. Please try again.");
+      showToast(`Translation failed: ${error?.message || 'Unknown error'}`);
     } finally {
       setIsTranslating(prev => ({ ...prev, [colIndex]: false }));
     }
