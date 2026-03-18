@@ -198,10 +198,7 @@ export default function App() {
 
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: [
-          { text: prompt },
-          { text: JSON.stringify(uniqueValues) }
-        ],
+        contents: `${prompt}\n\n${JSON.stringify(uniqueValues)}`,
         config: {
           responseMimeType: "application/json",
           responseSchema: {
