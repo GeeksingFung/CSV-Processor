@@ -1,8 +1,9 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import Papa from 'papaparse';
-import { UploadCloud, FolderOpen, CheckSquare, Square, Copy, Info } from 'lucide-react';
+import { UploadCloud, FolderOpen, CheckSquare, Square, Copy, Info, Languages, Loader2 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { GoogleGenAI, Type } from '@google/genai';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -18,6 +19,9 @@ export default function App() {
   const [encoding, setEncoding] = useState<string>('GBK');
   const [currentFile, setCurrentFile] = useState<File | null>(null);
   const [filters, setFilters] = useState<Record<number, string>>({});
+  const [translatedCols, setTranslatedCols] = useState<Set<number>>(new Set());
+  const [translations, setTranslations] = useState<Record<number, Record<string, string>>>({});
+  const [isTranslating, setIsTranslating] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     try {
@@ -70,6 +74,9 @@ export default function App() {
         ]));
         setFilters({});
         setCheckedRows(new Set());
+        setTranslatedCols(new Set());
+        setTranslations({});
+        setIsTranslating({});
       }
     });
   }, [currentFile, encoding]);
@@ -151,9 +158,9 @@ export default function App() {
     showToast(`Downloaded as ${newName}`);
   };
 
-  const getUniqueValues = (colIndex: number) => {
+  const getUniqueValues = (colIndex: number): string[] => {
     const vals = new Set(csvData.map(row => row[colIndex]));
-    return Array.from(vals).filter(Boolean).sort();
+    return Array.from(vals).filter((val): val is string => Boolean(val)).sort();
   };
 
   const filteredData = csvData.filter(row => {
@@ -162,6 +169,75 @@ export default function App() {
       return row[Number(colIdx)] === filterVal;
     });
   });
+
+  const toggleTranslation = async (colIndex: number) => {
+    if (translatedCols.has(colIndex)) {
+      const newSet = new Set(translatedCols);
+      newSet.delete(colIndex);
+      setTranslatedCols(newSet);
+      return;
+    }
+
+    if (translations[colIndex]) {
+      const newSet = new Set(translatedCols);
+      newSet.add(colIndex);
+      setTranslatedCols(newSet);
+      return;
+    }
+
+    setIsTranslating(prev => ({ ...prev, [colIndex]: true }));
+    try {
+      const uniqueValues = getUniqueValues(colIndex);
+      if (uniqueValues.length === 0) {
+        setIsTranslating(prev => ({ ...prev, [colIndex]: false }));
+        return;
+      }
+
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const prompt = `Translate the following JSON array of strings. If a string is mostly Chinese, translate it to English. If it is mostly English, translate it to Chinese. Keep the exact same array length and order. Return ONLY a valid JSON array of strings.`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [
+          { text: prompt },
+          { text: JSON.stringify(uniqueValues) }
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          }
+        }
+      });
+
+      const translatedArray = JSON.parse(response.text || '[]');
+      
+      const newTranslationMap: Record<string, string> = {};
+      uniqueValues.forEach((val, idx) => {
+        newTranslationMap[val] = translatedArray[idx] || val;
+      });
+
+      setTranslations(prev => ({ ...prev, [colIndex]: newTranslationMap }));
+      
+      const newSet = new Set(translatedCols);
+      newSet.add(colIndex);
+      setTranslatedCols(newSet);
+      showToast(`Column translated successfully.`);
+    } catch (error) {
+      console.error("Translation error:", error);
+      showToast("Translation failed. Please try again.");
+    } finally {
+      setIsTranslating(prev => ({ ...prev, [colIndex]: false }));
+    }
+  };
+
+  const getDisplayValue = (val: string, colIdx: number) => {
+    if (translatedCols.has(colIdx) && translations[colIdx]) {
+      return translations[colIdx][val] || val;
+    }
+    return val;
+  };
 
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900 font-sans p-8">
@@ -226,7 +302,21 @@ export default function App() {
                     {headers.map((header, idx) => (
                       <th key={idx} className="px-4 py-3 align-top">
                         <div className="flex flex-col gap-2">
-                          <span className="font-semibold text-neutral-700">{header} <span className="text-neutral-400 font-normal text-xs">(原 {['A', 'B', 'D', 'E', 'G'][idx]} 列)</span></span>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-neutral-700">{header} <span className="text-neutral-400 font-normal text-xs">(原 {['A', 'B', 'D', 'E', 'G'][idx]} 列)</span></span>
+                            <button
+                              onClick={() => toggleTranslation(idx)}
+                              disabled={isTranslating[idx]}
+                              className={cn(
+                                "p-1.5 rounded-md transition-colors",
+                                translatedCols.has(idx) ? "bg-blue-100 text-blue-600" : "text-neutral-400 hover:bg-neutral-200 hover:text-neutral-700",
+                                isTranslating[idx] && "opacity-50 cursor-not-allowed"
+                              )}
+                              title="Toggle Translation (ZH ↔ EN)"
+                            >
+                              {isTranslating[idx] ? <Loader2 className="w-4 h-4 animate-spin" /> : <Languages className="w-4 h-4" />}
+                            </button>
+                          </div>
                           <select
                             className="text-xs border border-neutral-300 rounded px-1 py-1 font-normal bg-white text-neutral-700 focus:outline-none focus:ring-1 focus:ring-blue-500 max-w-[150px]"
                             value={filters[idx] || ''}
@@ -234,7 +324,7 @@ export default function App() {
                           >
                             <option value="">全部 (All)</option>
                             {getUniqueValues(idx).map(val => (
-                              <option key={val} value={val}>{val}</option>
+                              <option key={val} value={val}>{getDisplayValue(val, idx)}</option>
                             ))}
                           </select>
                         </div>
@@ -262,16 +352,16 @@ export default function App() {
                             {isChecked ? <CheckSquare className="w-5 h-5 text-blue-600" /> : <Square className="w-5 h-5" />}
                           </button>
                         </td>
-                        <TableCell value={row[0]} onClick={() => handleCellClick(row[0])} />
-                        <TableCell value={row[1]} onClick={() => handleCellClick(row[1])} />
+                        <TableCell value={getDisplayValue(row[0], 0)} onClick={() => handleCellClick(getDisplayValue(row[0], 0))} />
+                        <TableCell value={getDisplayValue(row[1], 1)} onClick={() => handleCellClick(getDisplayValue(row[1], 1))} />
                         <TableCell
-                          value={row[2]}
-                          onClick={() => handleCellClick(row[2])}
+                          value={getDisplayValue(row[2], 2)}
+                          onClick={() => handleCellClick(getDisplayValue(row[2], 2))}
                           isDropTarget
-                          onDropFile={(e) => handleFileDropOnCell(e, row[2])}
+                          onDropFile={(e) => handleFileDropOnCell(e, getDisplayValue(row[2], 2))}
                         />
-                        <TableCell value={row[3]} onClick={() => handleCellClick(row[3])} />
-                        <TableCell value={row[4]} onClick={() => handleCellClick(row[4])} />
+                        <TableCell value={getDisplayValue(row[3], 3)} onClick={() => handleCellClick(getDisplayValue(row[3], 3))} />
+                        <TableCell value={getDisplayValue(row[4], 4)} onClick={() => handleCellClick(getDisplayValue(row[4], 4))} />
                       </tr>
                     );
                   })}
