@@ -1,0 +1,5 @@
+{
+  "name": "CSV Grok Processor",
+  "description": "Process CSV files, filter by 'Grok', and manage files with drag-and-drop renaming.",
+  "requestFramePermissions": []
+}
